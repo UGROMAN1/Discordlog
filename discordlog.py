@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import discord
 from discord.ext import commands
 from discord import app_commands
@@ -28,11 +29,9 @@ log_channels = {}
 initial_setup_done = {}
 first_time_members = {}  # Словарь для отслеживания первых подключений
 
-
 def get_current_time():
     now = datetime.now()
     return now.strftime("%Y-%m-%d %H:%M:%S")
-
 
 class SettingsView(discord.ui.View):
     def __init__(self):
@@ -57,37 +56,11 @@ class SettingsView(discord.ui.View):
         self.update_options()
         await interaction.response.edit_message(view=self)
         status_label = 'On' if event_settings[selected_event] else 'Off'
-        await interaction.followup.send(
-            f'[{get_current_time()}] {selected_event.replace("_", " ").title()} is now {status_label}', ephemeral=True)
-
-
-class ChannelSelect(discord.ui.Select):
-    def __init__(self, ctx):
-        self.ctx = ctx
-        options = [
-            discord.SelectOption(label=channel.name, value=str(channel.id))
-            for channel in ctx.guild.text_channels
-        ]
-        super().__init__(placeholder='Select a log channel', min_values=1, max_values=1, options=options)
-
-    async def callback(self, interaction: discord.Interaction):
-        selected_channel_id = int(self.values[0])
-        selected_channel = self.ctx.guild.get_channel(selected_channel_id)
-        log_channels[self.ctx.guild.id] = selected_channel
-        await interaction.response.send_message(f'[{get_current_time()}] Log channel set to {selected_channel.mention}',
-                                                ephemeral=True)
-
-
-class ChannelSelectView(discord.ui.View):
-    def __init__(self, ctx):
-        super().__init__()
-        self.ctx = ctx
-        self.add_item(ChannelSelect(ctx))
-
+        await interaction.followup.send(f'{selected_event.replace("_", " ").title()} is now {status_label}')
 
 @bot.event
 async def on_ready():
-    print(f'Logged in as {bot.user.name} ({bot.user.id})')
+    print(f'Logged in as {bot.user}')
 
     # Заполнение словаря first_time_members текущими пользователями
     for guild in bot.guilds:
