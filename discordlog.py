@@ -174,7 +174,7 @@ async def on_voice_state_update(member, before, after):
         before_channel_link = f'<#{before_channel_id}>' if before_channel_id else before_channel_name
         after_channel_link = f'<#{after_channel_id}>' if after.channel else after_channel_name
 
-        changes.append(f'Voice channel changed from {before_channel_link} to {after_channel_link}')
+        changes.append(f'{member.display_name} ({member.mention}) changed voice channel from {before_channel_link} to {after_channel_link}')
 
     # Отслеживание отключения микрофона другим пользователем
     if (event_settings['member_mute'] or event_settings['member_unmute']) and before.mute != after.mute:
