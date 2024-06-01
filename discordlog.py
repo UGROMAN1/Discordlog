@@ -1,8 +1,8 @@
-# -*- coding: utf-8 -*-
 import discord
 from discord.ext import commands
 from discord import app_commands
 from datetime import datetime
+import pytz  # Необходимо установить библиотеку pytz
 from config import TOKEN  # Импортируем TOKEN из config.py
 
 # Создайте экземпляр клиента
@@ -28,9 +28,13 @@ event_settings = {
 log_channels = {}
 initial_setup_done = {}
 first_time_members = {}  # Словарь для отслеживания первых подключений
+server_timezones = {}  # Словарь для хранения часовых поясов для каждого сервера
 
-def get_current_time():
-    now = datetime.now()
+def get_current_time(guild_id):
+    now = datetime.utcnow()
+    if guild_id in server_timezones:
+        timezone = pytz.timezone(server_timezones[guild_id])
+        now = pytz.utc.localize(now).astimezone(timezone)
     return now.strftime("%Y-%m-%d %H:%M:%S")
 
 class SettingsView(discord.ui.View):
@@ -58,6 +62,33 @@ class SettingsView(discord.ui.View):
         status_label = 'On' if event_settings[selected_event] else 'Off'
         await interaction.followup.send(f'{selected_event.replace("_", " ").title()} is now {status_label}')
 
+def get_timezone_options():
+    timezones = [
+        'UTC', 'Europe/Moscow', 'US/Eastern', 'US/Central', 'US/Mountain', 'US/Pacific', 'Europe/London',
+        'Europe/Paris', 'Europe/Berlin', 'Asia/Tokyo', 'Asia/Shanghai', 'Asia/Kolkata', 'Australia/Sydney'
+    ]
+    options = []
+    for tz in timezones:
+        timezone = pytz.timezone(tz)
+        now = datetime.now(timezone)
+        utc_offset = now.strftime('%z')
+        formatted_offset = f"UTC{utc_offset[:3]}:{utc_offset[3:]}"
+        options.append(discord.SelectOption(label=f'{tz} ({formatted_offset})', value=tz))
+    return options
+
+class TimezoneSelectView(discord.ui.View):
+    def __init__(self):
+        super().__init__()
+        options = get_timezone_options()
+        select = discord.ui.Select(placeholder='Select Timezone', options=options, custom_id='select_timezone')
+        select.callback = self.select_callback
+        self.add_item(select)
+
+    async def select_callback(self, interaction):
+        selected_timezone = interaction.data['values'][0]
+        server_timezones[interaction.guild.id] = selected_timezone
+        await interaction.response.send_message(f'Timezone set to {selected_timezone}', ephemeral=True)
+
 @bot.event
 async def on_ready():
     print(f'Logged in as {bot.user}')
@@ -68,7 +99,6 @@ async def on_ready():
 
     await bot.tree.sync()
 
-
 @bot.event
 async def on_guild_join(guild):
     await guild.system_channel.send(
@@ -77,12 +107,11 @@ async def on_guild_join(guild):
     # Инициализация словаря для нового сервера
     first_time_members[guild.id] = set(member.id for member in guild.members)
 
-
 @bot.event
 async def on_member_join(member):
     log_channel = log_channels.get(member.guild.id)
     if event_settings['member_join'] and log_channel:
-        await log_channel.send(f'[{get_current_time()}] <@{member.id}> has joined the server.')
+        await log_channel.send(f'[{get_current_time(member.guild.id)}] <@{member.id}> has joined the server.')
 
     # Проверка первого подключения по приглашению
     if member.guild.id not in first_time_members:
@@ -91,7 +120,7 @@ async def on_member_join(member):
     if member.id not in first_time_members[member.guild.id]:
         first_time_members[member.guild.id].add(member.id)
         if event_settings['first_time_join'] and log_channel:
-            await log_channel.send(f'[{get_current_time()}] <@{member.id}> has joined the server for the first time.')
+            await log_channel.send(f'[{get_current_time(member.guild.id)}] <@{member.id}> has joined the server for the first time.')
 
     # Отслеживание подключения по приглашению
     invites_before = await member.guild.invites()
@@ -100,9 +129,8 @@ async def on_member_join(member):
     for invite in invites_before:
         if invite.uses < [inv for inv in invites_after if inv.code == invite.code][0].uses:
             await log_channel.send(
-                f'[{get_current_time()}] <@{member.id}> joined the server using invite from <@{invite.inviter.id}>')
+                f'[{get_current_time(member.guild.id)}] <@{member.id}> joined the server using invite from <@{invite.inviter.id}>')
             break
-
 
 @bot.event
 async def on_member_remove(member):
@@ -112,18 +140,17 @@ async def on_member_remove(member):
             async for entry in member.guild.audit_logs(action=discord.AuditLogAction.kick, limit=1):
                 if entry.target.id == member.id:
                     await log_channel.send(
-                        f'[{get_current_time()}] <@{member.id}> was kicked from the server by <@{entry.user.id}>.')
+                        f'[{get_current_time(member.guild.id)}] <@{member.id}> was kicked from the server by <@{entry.user.id}>.')
                     return
             async for entry in member.guild.audit_logs(action=discord.AuditLogAction.ban, limit=1):
                 if entry.target.id == member.id:
                     await log_channel.send(
-                        f'[{get_current_time()}] <@{member.id}> was banned from the server by <@{entry.user.id}>.')
+                        f'[{get_current_time(member.guild.id)}] <@{member.id}> was banned from the server by <@{entry.user.id}>.')
                     return
-            await log_channel.send(f'[{get_current_time()}] <@{member.id}> has left the server.')
+            await log_channel.send(f'[{get_current_time(member.guild.id)}] <@{member.id}> has left the server.')
         except discord.errors.Forbidden:
             await log_channel.send(
-                f'[{get_current_time()}] <@{member.id}> has left the server. (Unable to access audit logs)')
-
+                f'[{get_current_time(member.guild.id)}] <@{member.id}> has left the server. (Unable to access audit logs)')
 
 @bot.event
 async def on_member_update(before, after):
@@ -140,7 +167,7 @@ async def on_member_update(before, after):
             if removed_roles:
                 changes.append(f'Roles removed: {", ".join(removed_roles)}')
         if changes and log_channel:
-            await log_channel.send(f'[{get_current_time()}] <@{before.id}> has been updated: ' + ', '.join(changes))
+            await log_channel.send(f'[{get_current_time(before.guild.id)}] <@{before.id}> has been updated: ' + ', '.join(changes))
 
         # Отслеживание отключения и включения микрофона другим пользователем
         if before.mute != after.mute:
@@ -153,11 +180,10 @@ async def on_member_update(before, after):
                         else:
                             event = "mute"
                         await log_channel.send(
-                            f'[{get_current_time()}] <@{before.id}> was {event} by <@{entry.user.id}>')
+                            f'[{get_current_time(before.guild.id)}] <@{before.id}> was {event} by <@{entry.user.id}>')
                         break
             except discord.errors.Forbidden:
-                await log_channel.send(f'[{get_current_time()}] Bot does not have permission to view audit logs.')
-
+                await log_channel.send(f'[{get_current_time(before.guild.id)}] Bot does not have permission to view audit logs.')
 
 @bot.event
 async def on_voice_state_update(member, before, after):
@@ -189,26 +215,23 @@ async def on_voice_state_update(member, before, after):
                     changes.append(f'<@{member.id}> was {event} by <@{entry.user.id}>')
                     break
         except discord.errors.Forbidden:
-            changes.append(f'[{get_current_time()}] Bot does not have permission to view audit logs.')
+            changes.append(f'[{get_current_time(member.guild.id)}] Bot does not have permission to view audit logs.')
 
     # Запись изменений
     if changes and log_channel:
-        await log_channel.send(f'[{get_current_time()}] ' + ', '.join(changes))
-
+        await log_channel.send(f'[{get_current_time(member.guild.id)}] ' + ', '.join(changes))
 
 @bot.event
 async def on_guild_channel_create(channel):
     log_channel = log_channels.get(channel.guild.id)
     if event_settings['channel_create'] and log_channel:
-        await log_channel.send(f'[{get_current_time()}] Channel created: <#{channel.id}>')
-
+        await log_channel.send(f'[{get_current_time(channel.guild.id)}] Channel created: <#{channel.id}>')
 
 @bot.event
 async def on_guild_channel_delete(channel):
     log_channel = log_channels.get(channel.guild.id)
     if event_settings['channel_delete'] and log_channel:
-        await log_channel.send(f'[{get_current_time()}] Channel deleted: {channel.name}')
-
+        await log_channel.send(f'[{get_current_time(channel.guild.id)}] Channel deleted: {channel.name}')
 
 @bot.event
 async def on_guild_channel_update(before, after):
@@ -230,29 +253,25 @@ async def on_guild_channel_update(before, after):
         if before.slowmode_delay != after.slowmode_delay:
             changes.append(f'Slowmode delay changed from {before.slowmode_delay} to {after.slowmode_delay} seconds')
         if changes:
-            await log_channel.send(f'[{get_current_time()}] Channel updated: <#{before.id}> -> ' + ', '.join(changes))
-
+            await log_channel.send(f'[{get_current_time(before.guild.id)}] Channel updated: <#{before.id}> -> ' + ', '.join(changes))
 
 @bot.event
 async def on_invite_create(invite):
     log_channel = log_channels.get(invite.guild.id)
     if event_settings['invite_create'] and log_channel:
-        await log_channel.send(f'[{get_current_time()}] Invite created: {invite.url} by <@{invite.inviter.id}>')
-
+        await log_channel.send(f'[{get_current_time(invite.guild.id)}] Invite created: {invite.url} by <@{invite.inviter.id}>')
 
 @bot.event
 async def on_member_kick(guild, user):
     log_channel = log_channels.get(guild.id)
     if event_settings['member_kick'] and log_channel:
-        await log_channel.send(f'[{get_current_time()}] <@{user.id}> was kicked from the server.')
-
+        await log_channel.send(f'[{get_current_time(guild.id)}] <@{user.id}> was kicked from the server.')
 
 @bot.tree.command(name="botsettings")
 async def botsettings(interaction: discord.Interaction):
     """Настройки событий бота."""
     view = SettingsView()
     await interaction.response.send_message('Bot settings:', view=view, ephemeral=True)
-
 
 @bot.tree.command(name="setchannellog")
 @app_commands.describe(log_channel="Select the channel for logging events")
@@ -262,13 +281,18 @@ async def setchannellog(interaction: discord.Interaction, log_channel: discord.T
     permissions = log_channel.permissions_for(member)
     if not permissions.view_channel:
         await interaction.response.send_message(
-            f'[{get_current_time()}] You do not have permission to set this channel.', ephemeral=True)
+            f'[{get_current_time(interaction.guild.id)}] You do not have permission to set this channel.', ephemeral=True)
         return
 
     log_channels[interaction.guild.id] = log_channel
-    await interaction.response.send_message(f'[{get_current_time()}] Log channel set to {log_channel.mention}',
+    await interaction.response.send_message(f'[{get_current_time(interaction.guild.id)}] Log channel set to {log_channel.mention}',
                                             ephemeral=True)
 
+@bot.tree.command(name="settimezone")
+async def settimezone(interaction: discord.Interaction):
+    """Установить часовой пояс для сервера."""
+    view = TimezoneSelectView()
+    await interaction.response.send_message('Select the timezone for the server:', view=view, ephemeral=True)
 
 @bot.tree.command(name="allcommands")
 async def custom_help(interaction: discord.Interaction):
@@ -277,10 +301,10 @@ async def custom_help(interaction: discord.Interaction):
     **Команды бота:**
     `/botsettings` - Настройки событий бота.
     `/setchannellog` - Установить канал для логирования событий.
+    `/settimezone` - Установить часовой пояс для сервера.
     `/allcommands` - Выводит список всех команд и их описание.
     """
     await interaction.response.send_message(help_text, ephemeral=True)
-
 
 # Запуск бота
 bot.run(TOKEN)
